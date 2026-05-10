@@ -198,7 +198,7 @@ const LS_CHECKINS_KEY = "pcamp:vix:checkins";
  */
 export function verifyAdminPassword(password) {
   const envPassword = import.meta.env.VITE_ADMIN_PASSWORD;
-  const expected = envPassword || "admin123";
+  const expected = envPassword || "admin123@vix";
   return password === expected;
 }
 
