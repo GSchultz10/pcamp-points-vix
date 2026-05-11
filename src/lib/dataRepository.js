@@ -227,16 +227,18 @@ export async function createEvent({ code, name, eventDate, location, speakers, a
   const normalized = code.trim().toUpperCase().replace(/\s+/g, "");
 
   if (isSupabaseConfigured) {
+    const row = {
+      code: normalized,
+      name: name.trim(),
+      active: active ?? true,
+    };
+    if (eventDate) row.event_date = eventDate;
+    if (location?.trim()) row.location = location.trim();
+    if (speakers?.trim()) row.speakers = speakers.trim();
+
     const { data, error } = await supabase
       .from("events")
-      .insert({
-        code: normalized,
-        name: name.trim(),
-        event_date: eventDate || null,
-        location: location?.trim() || null,
-        speakers: speakers?.trim() || null,
-        active: active ?? true,
-      })
+      .insert(row)
       .select()
       .single();
     if (error) throw error;
@@ -267,9 +269,13 @@ export async function createEvent({ code, name, eventDate, location, speakers, a
  */
 export async function updateEvent(id, fields) {
   if (isSupabaseConfigured) {
+    const clean = {};
+    for (const [k, v] of Object.entries(fields)) {
+      clean[k] = v === "" ? null : v;
+    }
     const { data, error } = await supabase
       .from("events")
-      .update(fields)
+      .update(clean)
       .eq("id", id)
       .select()
       .single();
