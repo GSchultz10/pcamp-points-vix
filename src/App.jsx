@@ -3,7 +3,7 @@ import logoFull from "./assets/logo-full.png";
 import logoSymbol from "./assets/logo-symbol.png";
 import Stepper from "./components/Stepper.jsx";
 import { formatPhone, isValidPhone } from "./lib/validation.js";
-import { validateEventCode, checkInUser, getUserByPhone, getRanking } from "./lib/dataRepository.js";
+import { validateEventCode, checkInUser, getUserByPhone, getRanking, checkBrizzPhoto, submitBrizzPhoto } from "./lib/dataRepository.js";
 
 // =============== ÍCONES (SVG inline) ===============
 const Icon = ({ name, ...props }) => {
@@ -249,6 +249,9 @@ export default function App() {
           />
         )}
       </div>
+
+      {/* DESAFIO BRIZZ */}
+      <BrizzChallenge />
 
       {/* RANKING PÚBLICO */}
       <PublicRanking />
@@ -753,6 +756,217 @@ function Button({ children, variant = "primary", block, className = "", ...props
     >
       {children}
     </button>
+  );
+}
+
+// =============== DESAFIO BRIZZ ===============
+function BrizzChallenge() {
+  const [brizzStep, setBrizzStep] = useState("idle"); // idle | form | uploading | done | already
+  const [brizzPhone, setBrizzPhone] = useState("");
+  const [brizzFile, setBrizzFile] = useState(null);
+  const [brizzPreview, setBrizzPreview] = useState(null);
+  const [brizzError, setBrizzError] = useState("");
+  const [brizzSubmitting, setBrizzSubmitting] = useState(false);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setBrizzError("Envie uma imagem (foto).");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setBrizzError("Imagem muito grande. Máximo 10 MB.");
+      return;
+    }
+    setBrizzFile(file);
+    setBrizzPreview(URL.createObjectURL(file));
+    setBrizzError("");
+  };
+
+  const handleCheckPhone = async () => {
+    if (!isValidPhone(brizzPhone)) {
+      setBrizzError("Celular inválido. Use (DDD) 9XXXX-XXXX");
+      return;
+    }
+    setBrizzError("");
+    setBrizzSubmitting(true);
+    try {
+      const { submitted } = await checkBrizzPhoto(brizzPhone);
+      if (submitted) {
+        setBrizzStep("already");
+      } else {
+        setBrizzStep("form");
+      }
+    } catch (err) {
+      console.error("[BrizzChallenge]", err);
+      setBrizzError("Erro ao verificar. Tente novamente.");
+    } finally {
+      setBrizzSubmitting(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!brizzFile) {
+      setBrizzError("Selecione uma foto primeiro.");
+      return;
+    }
+    setBrizzError("");
+    setBrizzSubmitting(true);
+    try {
+      const result = await submitBrizzPhoto(brizzPhone, brizzFile);
+      if (result.alreadySubmitted) {
+        setBrizzStep("already");
+      } else if (!result.success) {
+        setBrizzError(result.error || "Erro ao enviar foto.");
+      } else {
+        setBrizzStep("done");
+      }
+    } catch (err) {
+      console.error("[BrizzChallenge submit]", err);
+      setBrizzError("Erro ao enviar foto. Tente novamente.");
+    } finally {
+      setBrizzSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="relative z-[1] max-w-[1100px] mx-auto px-6 py-16 border-t border-white/10">
+      <div
+        className="rounded-2xl p-6 sm:p-10 border"
+        style={{
+          background: "linear-gradient(135deg, rgba(255, 152, 0, 0.08), rgba(223, 12, 120, 0.06))",
+          borderColor: "rgba(255, 152, 0, 0.25)",
+        }}
+      >
+        <span className="inline-block text-[10px] font-bold tracking-[0.12em] uppercase text-orange-400 bg-orange-400/10 border border-orange-400/30 px-2 py-[3px] rounded mb-4">
+          Desafio especial · Hoje no Brizz
+        </span>
+
+        <h2 className="text-[clamp(24px,4vw,32px)] font-extrabold tracking-[-0.02em] leading-[1.15] mb-2">
+          Consumiu no <span style={{ color: "#FF9800" }}>Brizz</span>? Ganhe{" "}
+          <span className="text-pcamp-pink">+2 pontos</span> extras!
+        </h2>
+        <p className="text-[15px] text-white/70 max-w-[600px] leading-relaxed mb-6">
+          O Brizz Food Park é nosso parceiro nessa edição. Registre seu consumo enviando
+          uma foto e ganhe 2 pontos bônus no programa. Uma foto por participante.
+        </p>
+
+        {brizzStep === "idle" && (
+          <div className="max-w-[400px]">
+            <div className="grid gap-4">
+              <FormField label="Seu celular (mesmo do check-in)" error={brizzError}>
+                <Input
+                  type="tel"
+                  placeholder="(27) 99999-9999"
+                  value={brizzPhone}
+                  onChange={(e) => {
+                    setBrizzPhone(formatPhone(e.target.value));
+                    if (brizzError) setBrizzError("");
+                  }}
+                  inputMode="numeric"
+                  error={brizzError}
+                />
+              </FormField>
+              <Button onClick={handleCheckPhone} disabled={brizzSubmitting}>
+                {brizzSubmitting ? "Verificando…" : "Participar do desafio"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {brizzStep === "form" && (
+          <div className="max-w-[400px]">
+            <div className="grid gap-4">
+              <div>
+                <label className="text-[13px] font-semibold text-white block mb-2">
+                  Foto do consumo no Brizz
+                </label>
+                <label
+                  className="flex flex-col items-center justify-center gap-2 w-full py-8 bg-white/[0.05] border-[1.5px] border-dashed border-white/20 rounded-xl cursor-pointer hover:border-orange-400/50 hover:bg-white/[0.08] transition-all"
+                >
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                  {brizzPreview ? (
+                    <img
+                      src={brizzPreview}
+                      alt="Preview"
+                      className="w-full max-h-[200px] object-cover rounded-lg"
+                    />
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/40">
+                        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" strokeLinecap="round" strokeLinejoin="round" />
+                        <circle cx="12" cy="13" r="4" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span className="text-sm text-white/50">Toque para tirar ou escolher uma foto</span>
+                    </>
+                  )}
+                </label>
+              </div>
+              {brizzError && (
+                <div className="text-[13px] text-[var(--warn)]">{brizzError}</div>
+              )}
+              <div className="flex gap-3">
+                <Button
+                  variant="ghost"
+                  className="flex-1"
+                  onClick={() => {
+                    setBrizzStep("idle");
+                    setBrizzFile(null);
+                    setBrizzPreview(null);
+                    setBrizzError("");
+                  }}
+                >
+                  Voltar
+                </Button>
+                <Button onClick={handleSubmit} disabled={brizzSubmitting || !brizzFile} className="flex-1">
+                  {brizzSubmitting ? "Enviando…" : "Enviar foto (+2 pts)"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {brizzStep === "done" && (
+          <div
+            className="max-w-[400px] text-center p-6 rounded-xl"
+            style={{
+              background: "rgba(105, 240, 174, 0.08)",
+              border: "1px solid rgba(105, 240, 174, 0.25)",
+            }}
+          >
+            <div className="text-4xl mb-3">
+              <Icon name="check" width="48" height="48" style={{ color: "var(--success)", margin: "0 auto" }} />
+            </div>
+            <div className="text-lg font-bold mb-1">+2 pontos adicionados!</div>
+            <p className="text-sm text-white/70">
+              Obrigado por consumir no Brizz. Seus pontos extras já foram creditados.
+            </p>
+          </div>
+        )}
+
+        {brizzStep === "already" && (
+          <div
+            className="max-w-[400px] text-center p-6 rounded-xl"
+            style={{
+              background: "rgba(79, 195, 247, 0.08)",
+              border: "1px solid rgba(79, 195, 247, 0.25)",
+            }}
+          >
+            <div className="text-lg font-bold mb-1">Você já participou!</div>
+            <p className="text-sm text-white/70">
+              Sua foto do Brizz já foi registrada e os +2 pontos já estão no seu saldo.
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
