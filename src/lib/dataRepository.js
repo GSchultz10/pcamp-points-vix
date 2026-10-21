@@ -170,31 +170,13 @@ async function getUserAggregateSupabase(userId) {
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
-  // Inclui pontos do desafio Brizz
-  const { data: brizzPhoto } = await supabase
-    .from("brizz_photos")
-    .select("points, created_at")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  const checkinPoints = (checkins || []).reduce((sum, c) => sum + c.points, 0);
-  const brizzPoints = brizzPhoto?.points || 0;
-  const totalPoints = checkinPoints + brizzPoints;
+  const totalPoints = (checkins || []).reduce((sum, c) => sum + c.points, 0);
 
   const events = (checkins || []).map((c) => ({
     date: c.created_at,
     code: c.event_code,
     pts: c.points,
   }));
-
-  if (brizzPhoto) {
-    events.push({
-      date: brizzPhoto.created_at,
-      code: "BRIZZ-FOTO",
-      pts: brizzPhoto.points,
-    });
-    events.sort((a, b) => new Date(b.date) - new Date(a.date));
-  }
 
   return {
     name: user.name,
@@ -204,110 +186,6 @@ async function getUserAggregateSupabase(userId) {
     createdAt: user.created_at,
     events,
   };
-}
-
-// ====== BRIZZ CHALLENGE ======
-
-/**
- * Verifica se o usuário já enviou foto do Brizz.
- * @returns {Promise<{submitted: boolean, photoUrl?: string}>}
- */
-export async function checkBrizzPhoto(phoneFormatted) {
-  const phoneKey = phoneToKey(phoneFormatted);
-
-  if (isSupabaseConfigured) {
-    const { data: user } = await supabase
-      .from("users")
-      .select("id")
-      .eq("phone_key", phoneKey)
-      .maybeSingle();
-    if (!user) return { submitted: false };
-
-    const { data: photo } = await supabase
-      .from("brizz_photos")
-      .select("photo_url")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    return photo
-      ? { submitted: true, photoUrl: photo.photo_url }
-      : { submitted: false };
-  }
-
-  // Fallback localStorage
-  const key = `pcamp:vix:brizz:${phoneKey}`;
-  const raw = localStorage.getItem(key);
-  if (!raw) return { submitted: false };
-  return { submitted: true, photoUrl: JSON.parse(raw).photoUrl };
-}
-
-/**
- * Envia foto do desafio Brizz e concede +2 pontos.
- * O usuário precisa já existir (ter feito check-in em algum evento).
- * @returns {Promise<{success: boolean, alreadySubmitted?: boolean, error?: string}>}
- */
-export async function submitBrizzPhoto(phoneFormatted, photoFile) {
-  const phoneKey = phoneToKey(phoneFormatted);
-
-  if (isSupabaseConfigured) {
-    // 1) Busca usuário
-    const { data: user, error: uErr } = await supabase
-      .from("users")
-      .select("id")
-      .eq("phone_key", phoneKey)
-      .maybeSingle();
-    if (uErr) throw uErr;
-    if (!user) return { success: false, error: "Usuário não encontrado. Faça check-in no evento primeiro." };
-
-    // 2) Verifica duplicidade
-    const { data: existing } = await supabase
-      .from("brizz_photos")
-      .select("id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (existing) return { success: false, alreadySubmitted: true };
-
-    // 3) Upload da foto
-    const ext = photoFile.name?.split(".").pop() || "jpg";
-    const filePath = `${user.id}-${Date.now()}.${ext}`;
-    const { error: uploadErr } = await supabase.storage
-      .from("brizz-photos")
-      .upload(filePath, photoFile, { contentType: photoFile.type });
-    if (uploadErr) throw uploadErr;
-
-    const { data: urlData } = supabase.storage
-      .from("brizz-photos")
-      .getPublicUrl(filePath);
-    const photoUrl = urlData.publicUrl;
-
-    // 4) Registra foto + pontos
-    const { error: insertErr } = await supabase.from("brizz_photos").insert({
-      user_id: user.id,
-      photo_url: photoUrl,
-      points: 2,
-    });
-    if (insertErr) throw insertErr;
-
-    return { success: true };
-  }
-
-  // Fallback localStorage
-  const userKey = `${LS_USER_PREFIX}${phoneKey}`;
-  const rawUser = localStorage.getItem(userKey);
-  if (!rawUser) return { success: false, error: "Usuário não encontrado. Faça check-in no evento primeiro." };
-
-  const brizzKey = `pcamp:vix:brizz:${phoneKey}`;
-  if (localStorage.getItem(brizzKey)) return { success: false, alreadySubmitted: true };
-
-  const photoUrl = URL.createObjectURL(photoFile);
-  localStorage.setItem(brizzKey, JSON.stringify({ photoUrl, points: 2, createdAt: new Date().toISOString() }));
-
-  // Soma pontos no usuário
-  const user = JSON.parse(rawUser);
-  user.points = (user.points || 0) + 2;
-  user.events = [...(user.events || []), { date: new Date().toISOString(), code: "BRIZZ-FOTO", pts: 2 }];
-  localStorage.setItem(userKey, JSON.stringify(user));
-
-  return { success: true };
 }
 
 // ====== ADMIN FUNCTIONS ======
@@ -505,20 +383,11 @@ export async function getRanking() {
       .select("user_id, points");
     if (cErr) throw cErr;
 
-    // Inclui pontos do desafio Brizz no ranking
-    const { data: brizzPhotos, error: bErr } = await supabase
-      .from("brizz_photos")
-      .select("user_id, points");
-    if (bErr) throw bErr;
-
     const pointsMap = {};
     const eventsMap = {};
     for (const c of checkins || []) {
       pointsMap[c.user_id] = (pointsMap[c.user_id] || 0) + c.points;
       eventsMap[c.user_id] = (eventsMap[c.user_id] || 0) + 1;
-    }
-    for (const b of brizzPhotos || []) {
-      pointsMap[b.user_id] = (pointsMap[b.user_id] || 0) + b.points;
     }
 
     return (users || [])
