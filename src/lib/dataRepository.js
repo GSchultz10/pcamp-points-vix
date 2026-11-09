@@ -170,13 +170,31 @@ async function getUserAggregateSupabase(userId) {
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
-  const totalPoints = (checkins || []).reduce((sum, c) => sum + c.points, 0);
+  // Inclui pontos do desafio Brizz (envio encerrado, pontos já concedidos permanecem)
+  const { data: brizzPhoto } = await supabase
+    .from("brizz_photos")
+    .select("points, created_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const checkinPoints = (checkins || []).reduce((sum, c) => sum + c.points, 0);
+  const brizzPoints = brizzPhoto?.points || 0;
+  const totalPoints = checkinPoints + brizzPoints;
 
   const events = (checkins || []).map((c) => ({
     date: c.created_at,
     code: c.event_code,
     pts: c.points,
   }));
+
+  if (brizzPhoto) {
+    events.push({
+      date: brizzPhoto.created_at,
+      code: "BRIZZ-FOTO",
+      pts: brizzPhoto.points,
+    });
+    events.sort((a, b) => new Date(b.date) - new Date(a.date));
+  }
 
   return {
     name: user.name,
@@ -383,11 +401,20 @@ export async function getRanking() {
       .select("user_id, points");
     if (cErr) throw cErr;
 
+    // Inclui pontos do desafio Brizz no ranking
+    const { data: brizzPhotos, error: bErr } = await supabase
+      .from("brizz_photos")
+      .select("user_id, points");
+    if (bErr) throw bErr;
+
     const pointsMap = {};
     const eventsMap = {};
     for (const c of checkins || []) {
       pointsMap[c.user_id] = (pointsMap[c.user_id] || 0) + c.points;
       eventsMap[c.user_id] = (eventsMap[c.user_id] || 0) + 1;
+    }
+    for (const b of brizzPhotos || []) {
+      pointsMap[b.user_id] = (pointsMap[b.user_id] || 0) + b.points;
     }
 
     return (users || [])
