@@ -654,31 +654,65 @@ function EventDetail({ event: initialEvent, onBack, onEdit, onDeleted }) {
 // =============== RANKING ===============
 function RankingList({ onSelectParticipant }) {
   const [ranking, setRanking] = useState([]);
+  const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [codeFilter, setCodeFilter] = useState("");
 
   useEffect(() => {
-    getRanking()
-      .then(setRanking)
+    Promise.all([getRanking(), listAllEvents()])
+      .then(([r, evs]) => {
+        setRanking(r);
+        setEvents(evs || []);
+      })
       .catch((err) => console.error("[RankingList]", err))
       .finally(() => setLoading(false));
   }, []);
 
+  const filtered = codeFilter
+    ? ranking.filter((p) => (p.breakdown || []).some((b) => b.code === codeFilter))
+    : ranking;
+
   return (
     <div style={{ animation: "fadeUp 0.4s ease-out" }}>
       <h1 className="text-2xl font-extrabold tracking-[-0.02em] mb-2">Ranking</h1>
-      <p className="text-sm text-white/50 mb-8">
+      <p className="text-sm text-white/50 mb-6">
         Todos os participantes ordenados por pontos. Clique para ver detalhes.
       </p>
 
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <select
+          value={codeFilter}
+          onChange={(e) => setCodeFilter(e.target.value)}
+          className="admin-input sm:max-w-[420px]"
+        >
+          <option value="">Todos os códigos</option>
+          {events.map((ev) => (
+            <option key={ev.id} value={ev.code}>
+              {ev.code} · {ev.name}
+            </option>
+          ))}
+        </select>
+        {codeFilter && !loading && (
+          <span className="text-sm text-white/70">
+            <strong className="text-pcamp-pink">{filtered.length}</strong>{" "}
+            {filtered.length === 1 ? "pessoa usou" : "pessoas usaram"} o código {codeFilter}
+          </span>
+        )}
+      </div>
+
       {loading ? (
         <p className="text-white/60 text-sm">Carregando...</p>
-      ) : ranking.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="bg-white/[0.03] border border-white/10 rounded-xl p-8 text-center">
-          <p className="text-white/45 text-sm">Nenhum participante com pontos ainda.</p>
+          <p className="text-white/45 text-sm">
+            {codeFilter ? "Ninguém usou esse código ainda." : "Nenhum participante com pontos ainda."}
+          </p>
         </div>
       ) : (
         <div className="grid gap-2">
-          {ranking.map((p, i) => (
+          {filtered.map((p) => {
+            const i = ranking.indexOf(p); // posição no ranking geral, mesmo filtrado
+            return (
             <button
               key={p.id}
               onClick={() => onSelectParticipant(p)}
@@ -712,9 +746,11 @@ function RankingList({ onSelectParticipant }) {
                 <span className="text-white/30 text-lg">&rsaquo;</span>
               </div>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
+      <AdminInputStyles />
     </div>
   );
 }
@@ -1180,6 +1216,7 @@ function AdminInputStyles() {
         transition: all 0.2s;
       }
       .admin-input::placeholder { color: rgba(255,255,255,0.4); }
+      .admin-input option { background: #1A1226; color: #fff; }
       .admin-input:focus {
         outline: none;
         border-color: #DF0C78;

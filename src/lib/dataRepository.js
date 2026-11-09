@@ -437,6 +437,7 @@ export async function getRanking() {
       eventsMap[c.user_id] = (eventsMap[c.user_id] || 0) + 1;
       addBreakdown(c.user_id, {
         date: c.created_at,
+        code: c.event_code,
         label: eventNames[c.event_code] || c.event_code,
         pts: c.points,
       });
@@ -485,6 +486,7 @@ export async function getRanking() {
         breakdown: (user.events || [])
           .map((e) => ({
             date: e.date,
+            code: e.code,
             label: e.label || (e.code === "BRIZZ-FOTO" ? "Desafio Brizz (foto)" : e.code),
             pts: e.pts,
           }))
