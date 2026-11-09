@@ -760,6 +760,7 @@ function Button({ children, variant = "primary", block, className = "", ...props
 function PublicRanking() {
   const [ranking, setRanking] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState(null);
 
   React.useEffect(() => {
     getRanking()
@@ -788,10 +789,15 @@ function PublicRanking() {
         </div>
       ) : (
         <div className="grid gap-2 max-w-[600px]">
-          {ranking.map((p, i) => (
-            <div
-              key={p.id}
-              className="flex items-center gap-4 py-3.5 px-5 bg-white/[0.03] border border-white/10 rounded-xl"
+          {ranking.map((p, i) => {
+            const open = expandedId === p.id;
+            return (
+            <div key={p.id} className="bg-white/[0.03] border border-white/10 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setExpandedId(open ? null : p.id)}
+              aria-expanded={open}
+              className="w-full text-left flex items-center gap-4 py-3.5 px-5 cursor-pointer hover:bg-white/[0.03] rounded-xl transition-all"
             >
               <div
                 className={[
@@ -810,15 +816,38 @@ function PublicRanking() {
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-sm text-white truncate">{p.name}</div>
                 <div className="text-xs text-white/45">
-                  {p.totalEvents} evento{p.totalEvents !== 1 ? "s" : ""}
+                  {p.totalEvents} evento{p.totalEvents !== 1 ? "s" : ""} · {open ? "ocultar detalhes" : "ver detalhes"}
                 </div>
               </div>
               <div>
                 <span className="text-lg font-extrabold text-pcamp-pink">{p.points}</span>
                 <span className="text-xs text-white/45 ml-1">{p.points === 1 ? "pt" : "pts"}</span>
               </div>
+            </button>
+            {open && (
+              <div className="px-5 pb-4 pt-1 border-t border-white/10">
+                {(p.breakdown || []).map((item, j) => (
+                  <div key={j} className="flex justify-between items-center gap-4 py-2 text-sm">
+                    <div className="min-w-0">
+                      <div className="text-white/85 truncate">{item.label}</div>
+                      <div className="text-xs text-white/45">
+                        {new Date(item.date).toLocaleDateString("pt-BR", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0 font-bold text-pcamp-pink">
+                      +{item.pts} {item.pts === 1 ? "pt" : "pts"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>

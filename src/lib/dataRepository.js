@@ -398,23 +398,40 @@ export async function getRanking() {
 
     const { data: checkins, error: cErr } = await supabase
       .from("checkins")
-      .select("user_id, points");
+      .select("user_id, points, event_code, created_at");
     if (cErr) throw cErr;
 
     // Inclui pontos do desafio Brizz no ranking
     const { data: brizzPhotos, error: bErr } = await supabase
       .from("brizz_photos")
-      .select("user_id, points");
+      .select("user_id, points, created_at");
     if (bErr) throw bErr;
+
+    // Nomes dos eventos pro detalhamento (se falhar, mostra só o código)
+    const { data: events } = await supabase.from("events").select("code, name");
+    const eventNames = Object.fromEntries((events || []).map((e) => [e.code, e.name]));
 
     const pointsMap = {};
     const eventsMap = {};
+    const breakdownMap = {};
+    const addBreakdown = (userId, item) => {
+      (breakdownMap[userId] = breakdownMap[userId] || []).push(item);
+    };
     for (const c of checkins || []) {
       pointsMap[c.user_id] = (pointsMap[c.user_id] || 0) + c.points;
       eventsMap[c.user_id] = (eventsMap[c.user_id] || 0) + 1;
+      addBreakdown(c.user_id, {
+        date: c.created_at,
+        label: eventNames[c.event_code] || c.event_code,
+        pts: c.points,
+      });
     }
     for (const b of brizzPhotos || []) {
       pointsMap[b.user_id] = (pointsMap[b.user_id] || 0) + b.points;
+      addBreakdown(b.user_id, { date: b.created_at, label: "Desafio Brizz (foto)", pts: b.points });
+    }
+    for (const list of Object.values(breakdownMap)) {
+      list.sort((a, b) => new Date(b.date) - new Date(a.date));
     }
 
     return (users || [])
@@ -425,6 +442,7 @@ export async function getRanking() {
         phone: u.phone_formatted,
         points: pointsMap[u.id] || 0,
         totalEvents: eventsMap[u.id] || 0,
+        breakdown: breakdownMap[u.id] || [],
         createdAt: u.created_at,
       }))
       .filter((u) => u.points > 0)
@@ -445,6 +463,13 @@ export async function getRanking() {
         phone: user.phoneFormatted,
         points: user.points || 0,
         totalEvents: (user.events || []).length,
+        breakdown: (user.events || [])
+          .map((e) => ({
+            date: e.date,
+            label: e.code === "BRIZZ-FOTO" ? "Desafio Brizz (foto)" : e.code,
+            pts: e.pts,
+          }))
+          .sort((a, b) => new Date(b.date) - new Date(a.date)),
         createdAt: user.createdAt,
       });
     }
