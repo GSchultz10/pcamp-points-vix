@@ -177,9 +177,16 @@ async function getUserAggregateSupabase(userId) {
     .eq("user_id", userId)
     .maybeSingle();
 
+  // Pontos manuais lançados pelo admin (se a tabela ainda não existir, ignora)
+  const { data: bonusPoints } = await supabase
+    .from("bonus_points")
+    .select("points, reason, created_at")
+    .eq("user_id", userId);
+
   const checkinPoints = (checkins || []).reduce((sum, c) => sum + c.points, 0);
   const brizzPoints = brizzPhoto?.points || 0;
-  const totalPoints = checkinPoints + brizzPoints;
+  const bonusTotal = (bonusPoints || []).reduce((sum, b) => sum + b.points, 0);
+  const totalPoints = checkinPoints + brizzPoints + bonusTotal;
 
   const events = (checkins || []).map((c) => ({
     date: c.created_at,
@@ -193,8 +200,11 @@ async function getUserAggregateSupabase(userId) {
       code: "BRIZZ-FOTO",
       pts: brizzPhoto.points,
     });
-    events.sort((a, b) => new Date(b.date) - new Date(a.date));
   }
+  for (const b of bonusPoints || []) {
+    events.push({ date: b.created_at, code: "BONUS", label: b.reason, pts: b.points });
+  }
+  events.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   return {
     name: user.name,
@@ -407,6 +417,11 @@ export async function getRanking() {
       .select("user_id, points, created_at");
     if (bErr) throw bErr;
 
+    // Pontos manuais lançados pelo admin (se a tabela ainda não existir, ignora)
+    const { data: bonusPoints } = await supabase
+      .from("bonus_points")
+      .select("user_id, points, reason, created_at");
+
     // Nomes dos eventos pro detalhamento (se falhar, mostra só o código)
     const { data: events } = await supabase.from("events").select("code, name");
     const eventNames = Object.fromEntries((events || []).map((e) => [e.code, e.name]));
@@ -429,6 +444,10 @@ export async function getRanking() {
     for (const b of brizzPhotos || []) {
       pointsMap[b.user_id] = (pointsMap[b.user_id] || 0) + b.points;
       addBreakdown(b.user_id, { date: b.created_at, label: "Desafio Brizz (foto)", pts: b.points });
+    }
+    for (const b of bonusPoints || []) {
+      pointsMap[b.user_id] = (pointsMap[b.user_id] || 0) + b.points;
+      addBreakdown(b.user_id, { date: b.created_at, label: b.reason, pts: b.points });
     }
     for (const list of Object.values(breakdownMap)) {
       list.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -462,11 +481,11 @@ export async function getRanking() {
         phoneKey: user.phoneKey,
         phone: user.phoneFormatted,
         points: user.points || 0,
-        totalEvents: (user.events || []).length,
+        totalEvents: (user.events || []).filter((e) => e.code !== "BONUS").length,
         breakdown: (user.events || [])
           .map((e) => ({
             date: e.date,
-            label: e.code === "BRIZZ-FOTO" ? "Desafio Brizz (foto)" : e.code,
+            label: e.label || (e.code === "BRIZZ-FOTO" ? "Desafio Brizz (foto)" : e.code),
             pts: e.pts,
           }))
           .sort((a, b) => new Date(b.date) - new Date(a.date)),
@@ -484,6 +503,7 @@ export async function resetUserPoints(userId) {
   if (isSupabaseConfigured) {
     const { error } = await supabase.from("checkins").delete().eq("user_id", userId);
     if (error) throw error;
+    await supabase.from("bonus_points").delete().eq("user_id", userId);
     return;
   }
 
@@ -495,6 +515,117 @@ export async function resetUserPoints(userId) {
   user.points = 0;
   user.events = [];
   localStorage.setItem(key, JSON.stringify(user));
+}
+
+// ====== PONTOS MANUAIS (ADMIN) ======
+
+/**
+ * Busca participantes por nome ou telefone (até 20 resultados).
+ * Com 4+ dígitos busca por telefone; senão, por nome.
+ * @returns {Promise<Array<{id, name, phone}>>}
+ */
+export async function searchUsers(query) {
+  const term = query.trim();
+  if (term.length < 2) return [];
+  const digits = term.replace(/\D/g, "");
+  const byPhone = digits.length >= 4;
+
+  if (isSupabaseConfigured) {
+    let req = supabase.from("users").select("id, name, phone_formatted").order("name").limit(20);
+    req = byPhone ? req.like("phone_key", `%${digits}%`) : req.ilike("name", `%${term}%`);
+    const { data, error } = await req;
+    if (error) throw error;
+    return (data || []).map((u) => ({ id: u.id, name: u.name, phone: u.phone_formatted }));
+  }
+
+  // Fallback localStorage: id é o phoneKey
+  const results = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key.startsWith(LS_USER_PREFIX)) continue;
+    const user = JSON.parse(localStorage.getItem(key));
+    const match = byPhone
+      ? user.phoneKey.includes(digits)
+      : user.name.toLowerCase().includes(term.toLowerCase());
+    if (match) results.push({ id: user.phoneKey, name: user.name, phone: user.phoneFormatted });
+  }
+  return results.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 20);
+}
+
+/**
+ * Lança pontos manuais com justificativa (aparece no detalhamento do ranking).
+ * Se `userId` não vier, cria o participante a partir de nome + telefone
+ * (ou reaproveita o cadastro existente com o mesmo telefone).
+ * @returns {Promise<{userId, name, createdUser: boolean}>}
+ */
+export async function addManualPoints({ userId, name, phoneFormatted, points, reason }) {
+  const now = new Date().toISOString();
+  const cleanReason = reason.trim();
+
+  if (isSupabaseConfigured) {
+    let createdUser = false;
+    let targetName = name?.trim();
+
+    if (!userId) {
+      const phoneKey = phoneToKey(phoneFormatted);
+      const { data: existing, error: fetchErr } = await supabase
+        .from("users")
+        .select("id, name")
+        .eq("phone_key", phoneKey)
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+
+      if (existing) {
+        userId = existing.id;
+        targetName = existing.name;
+      } else {
+        const { data: created, error: insertErr } = await supabase
+          .from("users")
+          .insert({
+            phone_key: phoneKey,
+            phone_formatted: phoneFormatted,
+            name: targetName,
+            created_at: now,
+            last_seen: now,
+          })
+          .select("id")
+          .single();
+        if (insertErr) throw insertErr;
+        userId = created.id;
+        createdUser = true;
+      }
+    }
+
+    const { error } = await supabase.from("bonus_points").insert({
+      user_id: userId,
+      points,
+      reason: cleanReason,
+      created_at: now,
+    });
+    if (error) throw error;
+
+    return { userId, name: targetName, createdUser };
+  }
+
+  // Fallback localStorage: userId é o phoneKey
+  const phoneKey = userId || phoneToKey(phoneFormatted);
+  const key = `${LS_USER_PREFIX}${phoneKey}`;
+  const raw = localStorage.getItem(key);
+  const user = raw
+    ? JSON.parse(raw)
+    : {
+        phoneKey,
+        phoneFormatted,
+        name: name.trim(),
+        points: 0,
+        events: [],
+        createdAt: now,
+        lastSeen: now,
+      };
+  user.points = (user.points || 0) + points;
+  user.events = [...(user.events || []), { date: now, code: "BONUS", label: cleanReason, pts: points }];
+  localStorage.setItem(key, JSON.stringify(user));
+  return { userId: phoneKey, name: user.name, createdUser: !raw };
 }
 
 // ----- localStorage (fallback) -----

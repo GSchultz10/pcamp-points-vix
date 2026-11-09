@@ -9,11 +9,14 @@ import {
   getEventAttendees,
   getRanking,
   resetUserPoints,
+  searchUsers,
+  addManualPoints,
 } from "./lib/dataRepository.js";
+import { formatPhone, isValidPhone } from "./lib/validation.js";
 
 export default function Admin() {
   const [authed, setAuthed] = useState(false);
-  const [screen, setScreen] = useState("list"); // list | create | detail | edit | ranking | participant
+  const [screen, setScreen] = useState("list"); // list | create | detail | edit | ranking | participant | points
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [selectedParticipant, setSelectedParticipant] = useState(null);
 
@@ -94,6 +97,7 @@ export default function Admin() {
             }}
           />
         )}
+        {screen === "points" && <AddPointsScreen />}
       </div>
     </div>
   );
@@ -130,6 +134,14 @@ function AdminHeader({ currentScreen, onNavigate, onLogout }) {
             }`}
           >
             Ranking
+          </button>
+          <button
+            onClick={() => onNavigate("points")}
+            className={`text-xs font-semibold cursor-pointer bg-transparent border-0 font-sans transition-colors ${
+              currentScreen === "points" ? "text-white" : "text-white/50 hover:text-white"
+            }`}
+          >
+            Adicionar pontos
           </button>
           <div className="w-px h-4 bg-white/15" />
           <button
@@ -791,6 +803,240 @@ function ParticipantDetail({ participant, onBack }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// =============== ADICIONAR PONTOS ===============
+function AddPointsScreen() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null); // null = ainda não buscou
+  const [searching, setSearching] = useState(false);
+  const [selected, setSelected] = useState(null); // { id, name, phone } | { isNew: true }
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [points, setPoints] = useState("1");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState(null);
+
+  const resetAll = () => {
+    setQuery("");
+    setResults(null);
+    setSelected(null);
+    setNewName("");
+    setNewPhone("");
+    setPoints("1");
+    setReason("");
+    setError("");
+  };
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (query.trim().length < 2) return setError("Digite ao menos 2 caracteres");
+    setError("");
+    setSuccess(null);
+    setSelected(null);
+    setSearching(true);
+    try {
+      setResults(await searchUsers(query));
+    } catch (err) {
+      setError(err.message || "Erro ao buscar");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const startNewUser = () => {
+    const digits = query.replace(/\D/g, "");
+    setNewName(digits.length >= 4 ? "" : query.trim());
+    setNewPhone(digits.length >= 4 ? formatPhone(digits) : "");
+    setSelected({ isNew: true });
+    setError("");
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const pts = parseInt(points, 10);
+    if (!pts || pts < 1) return setError("Informe uma quantidade de pontos maior que zero");
+    if (!reason.trim()) return setError("A justificativa é obrigatória");
+    if (selected.isNew) {
+      if (!newName.trim()) return setError("Nome é obrigatório");
+      if (!isValidPhone(newPhone)) return setError("Celular inválido. Use (DDD) 9XXXX-XXXX");
+    }
+
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = await addManualPoints(
+        selected.isNew
+          ? { name: newName, phoneFormatted: newPhone, points: pts, reason }
+          : { userId: selected.id, points: pts, reason }
+      );
+      setSuccess({
+        name: result.name,
+        points: pts,
+        reason: reason.trim(),
+        createdUser: result.createdUser,
+        reusedUser: selected.isNew && !result.createdUser,
+      });
+      resetAll();
+    } catch (err) {
+      setError(err.message || "Erro ao lançar pontos");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{ animation: "fadeUp 0.4s ease-out" }}>
+      <h1 className="text-2xl font-extrabold tracking-[-0.02em] mb-2">Adicionar pontos</h1>
+      <p className="text-sm text-white/50 mb-8">
+        Busque o participante por nome ou telefone e lance pontos com uma justificativa.
+        A justificativa aparece no detalhamento do ranking público.
+      </p>
+
+      {success && (
+        <div className="mb-6 text-sm text-[var(--success)] bg-[rgba(105,240,174,0.08)] border border-[rgba(105,240,174,0.25)] rounded-xl px-4 py-3">
+          +{success.points} {success.points === 1 ? "ponto lançado" : "pontos lançados"} para{" "}
+          <strong>{success.name}</strong> · {success.reason}
+          {success.createdUser && " (novo participante cadastrado)"}
+          {success.reusedUser && " (telefone já cadastrado, pontos lançados no cadastro existente)"}
+        </div>
+      )}
+
+      <form onSubmit={handleSearch} className="flex gap-2 mb-4">
+        <input
+          type="text"
+          placeholder="Nome ou telefone"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setError("");
+          }}
+          className="admin-input flex-1"
+        />
+        <button
+          type="submit"
+          disabled={searching}
+          className="px-6 rounded-[10px] border-0 font-bold text-sm cursor-pointer font-sans bg-pcamp-pink text-white hover:bg-pcamp-pink-soft disabled:opacity-50"
+        >
+          {searching ? "Buscando..." : "Buscar"}
+        </button>
+      </form>
+
+      {!selected && error && <ErrorBanner>{error}</ErrorBanner>}
+
+      {results && !selected && (
+        <div className="grid gap-2">
+          {results.length === 0 && (
+            <p className="text-sm text-white/45 mb-1">Nenhum participante encontrado para "{query.trim()}".</p>
+          )}
+          {results.map((u) => (
+            <button
+              key={u.id}
+              onClick={() => {
+                setSelected(u);
+                setError("");
+              }}
+              className="w-full text-left flex items-center justify-between gap-4 py-3.5 px-5 bg-white/[0.03] border border-white/10 rounded-xl hover:border-pcamp-pink/40 hover:bg-white/[0.05] transition-all cursor-pointer font-sans"
+            >
+              <div className="min-w-0">
+                <div className="font-bold text-sm text-white truncate">{u.name}</div>
+                <div className="text-xs text-white/45">{u.phone}</div>
+              </div>
+              <span className="text-white/30 text-lg">&rsaquo;</span>
+            </button>
+          ))}
+          <button
+            onClick={startNewUser}
+            className="w-full text-left py-3.5 px-5 border border-dashed border-white/20 rounded-xl text-sm font-semibold text-white/70 hover:text-white hover:border-pcamp-pink/40 transition-all cursor-pointer bg-transparent font-sans"
+          >
+            + Cadastrar novo participante
+          </button>
+        </div>
+      )}
+
+      {selected && (
+        <form
+          onSubmit={handleSubmit}
+          className="bg-[var(--bg-card)] backdrop-blur-md border border-white/20 rounded-2xl p-8 grid gap-5"
+        >
+          {selected.isNew ? (
+            <>
+              <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-pcamp-pink">
+                Novo participante
+              </div>
+              <Field label="Nome" required>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="admin-input"
+                />
+              </Field>
+              <Field label="Celular" required>
+                <input
+                  type="tel"
+                  placeholder="(27) 99999-9999"
+                  value={newPhone}
+                  onChange={(e) => setNewPhone(formatPhone(e.target.value))}
+                  inputMode="numeric"
+                  className="admin-input"
+                />
+              </Field>
+            </>
+          ) : (
+            <div>
+              <div className="text-[11px] font-bold tracking-[0.08em] uppercase text-white/45 mb-1.5">
+                Participante
+              </div>
+              <div className="font-bold text-white">{selected.name}</div>
+              <div className="text-xs text-white/45">{selected.phone}</div>
+            </div>
+          )}
+
+          <Field label="Pontos" required>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={points}
+              onChange={(e) => setPoints(e.target.value)}
+              className="admin-input"
+            />
+          </Field>
+
+          <Field label="Justificativa (aparece no ranking público)" required>
+            <input
+              type="text"
+              placeholder="Ex.: Desafio Brizz (foto) · Indicação de participante"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={120}
+              className="admin-input"
+            />
+          </Field>
+
+          {error && <ErrorBanner>{error}</ErrorBanner>}
+
+          <SubmitButton disabled={submitting}>
+            {submitting ? "Lançando..." : "Lançar pontos"}
+          </SubmitButton>
+          <button
+            type="button"
+            onClick={() => {
+              setSelected(null);
+              setError("");
+            }}
+            className="text-sm text-white/60 hover:text-white cursor-pointer bg-transparent border-0 font-sans transition-colors"
+          >
+            Cancelar
+          </button>
+        </form>
+      )}
+      <AdminInputStyles />
     </div>
   );
 }

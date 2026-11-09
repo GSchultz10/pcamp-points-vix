@@ -680,7 +680,7 @@ function SuccessStep({ user, alreadyClaimed, viewOnly, onReset, onAddCode }) {
           >
             <div>
               <div className="font-semibold text-sm mb-0.5">
-                Pocket Vix · {ev.code}
+                {ev.label || `Pocket Vix · ${ev.code}`}
               </div>
               <div className="text-xs text-white/45">
                 {new Date(ev.date).toLocaleDateString("pt-BR", {
@@ -691,7 +691,7 @@ function SuccessStep({ user, alreadyClaimed, viewOnly, onReset, onAddCode }) {
               </div>
             </div>
             <div className="font-extrabold text-pcamp-pink text-sm">
-              +{ev.pts} pt
+              +{ev.pts} {ev.pts === 1 ? "pt" : "pts"}
             </div>
           </div>
         ))}
